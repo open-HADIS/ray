@@ -291,7 +291,7 @@ def _find_available_ports(start: int, end: int, *, num: int = 1) -> List[int]:
 
 
 def start_redis_with_sentinel(db_dir):
-    temp_dir = ray._common.utils.get_ray_temp_dir()
+    temp_dir = ray._common.utils.get_default_ray_temp_dir()
 
     redis_ports = _find_available_ports(49159, 55535, num=redis_sentinel_replicas() + 1)
     sentinel_port = redis_ports[0]
@@ -328,7 +328,7 @@ def start_redis(db_dir):
         leader_id = None
         redis_ports = []
         while len(redis_ports) != redis_replicas():
-            temp_dir = ray._common.utils.get_ray_temp_dir()
+            temp_dir = ray._common.utils.get_default_ray_temp_dir()
             port, free_port = _find_available_ports(49159, 55535, num=2)
             try:
                 node_id = None
@@ -569,6 +569,17 @@ def ray_start_with_dashboard(request, maybe_setup_external_redis):
 
 
 @pytest.fixture
+def ray_start_with_dashboard_and_proxy(request, httpserver, maybe_setup_external_redis):
+    hsurl = httpserver.url_for("/")
+
+    param = getattr(request, "param", {})
+    if param.get("num_cpus") is None:
+        param["num_cpus"] = 1
+    with _ray_start(include_dashboard=True, proxy_server_url=hsurl, **param) as info:
+        yield info
+
+
+@pytest.fixture
 def make_sure_dashboard_http_port_unused():
     """Make sure the dashboard agent http port is unused."""
     for process in psutil.process_iter():
@@ -626,13 +637,6 @@ def ray_start_regular_shared(request):
 def ray_start_regular_shared_2_cpus(request):
     param = getattr(request, "param", {})
     with _ray_start(num_cpus=2, **param) as res:
-        yield res
-
-
-@pytest.fixture(scope="module", params=[{"local_mode": True}, {"local_mode": False}])
-def ray_start_shared_local_modes(request):
-    param = getattr(request, "param", {})
-    with _ray_start(**param) as res:
         yield res
 
 
@@ -749,10 +753,12 @@ def ray_start_cluster_head_with_env_vars(
     request, maybe_setup_external_redis, monkeypatch
 ):
     param = getattr(request, "param", {})
-    env_vars = param.pop("env_vars", {})
+    env_vars = param.get("env_vars", {})
+    # Create a copy of param without env_vars to pass to _ray_start_cluster
+    cluster_param = {k: v for k, v in param.items() if k != "env_vars"}
     for k, v in env_vars.items():
         monkeypatch.setenv(k, v)
-    with _ray_start_cluster(do_init=True, num_nodes=1, **param) as res:
+    with _ray_start_cluster(do_init=True, num_nodes=1, **cluster_param) as res:
         yield res
 
 
@@ -782,6 +788,17 @@ def ray_start_object_store_memory(request, maybe_setup_external_redis):
 @pytest.fixture
 def call_ray_start(request):
     with call_ray_start_context(request) as address:
+        yield address
+
+
+# This fixture will start an httpserver and use it as the proxy-server-url parameters
+@pytest.fixture
+def call_ray_start_context_with_proxy_server(httpserver):
+    hsurl = httpserver.url_for("/")
+    cmd = f"ray start --head --num-cpus=1 --proxy-server-url={hsurl} --port 0 --min-worker-port=0 --max-worker-port=0"
+    tempObject = type("Temp", (), {"param": cmd})
+
+    with call_ray_start_context(tempObject) as address:
         yield address
 
 

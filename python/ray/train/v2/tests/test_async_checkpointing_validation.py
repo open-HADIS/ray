@@ -1,5 +1,8 @@
+import multiprocessing
 import os
 import shutil
+import signal
+import time
 from unittest.mock import create_autospec
 
 import pytest
@@ -231,7 +234,7 @@ def test_report_checkpoint_upload_error(monkeypatch, tmp_path):
     )
     with pytest.raises(WorkerGroupError, match="error") as exc_info:
         trainer.fit()
-    assert isinstance(exc_info.value.worker_failures[0]._base_exc, ValueError)
+    assert isinstance(exc_info.value.worker_failures[0], ValueError)
 
 
 def test_report_validation_without_validation_fn():
@@ -248,7 +251,7 @@ def test_report_validation_without_validation_fn():
         match="`validation_config` was not set on the trainer, but a validation was requested.",
     ) as exc_info:
         trainer.fit()
-    assert isinstance(exc_info.value.worker_failures[0]._base_exc, ValueError)
+    assert isinstance(exc_info.value.worker_failures[0], ValueError)
 
 
 def test_report_validation_without_checkpoint():
@@ -263,7 +266,7 @@ def test_report_validation_without_checkpoint():
         WorkerGroupError, match="Validation requires a checkpoint to be provided."
     ) as exc_info:
         trainer.fit()
-    assert isinstance(exc_info.value.worker_failures[0]._base_exc, ValueError)
+    assert isinstance(exc_info.value.worker_failures[0], ValueError)
 
 
 def test_report_validation_fn_keeps_correct_checkpoints(tmp_path):
@@ -323,7 +326,7 @@ def test_report_validation_fn_keeps_correct_checkpoints(tmp_path):
     assert result.best_checkpoints[1][1] == {"score": 5}
 
 
-def test_report_validation_fn_overrides_default_kwargs():
+def test_report_validation_fn_overrides_default_kwargs(tmp_path):
     def validation_fn(checkpoint, validation_score, other_key):
         return {"validation_score": validation_score, "other_key": other_key}
 
@@ -343,6 +346,7 @@ def test_report_validation_fn_overrides_default_kwargs():
                 fn_kwargs={"validation_score": 1, "other_key": "other_value"}
             ),
         ),
+        run_config=RunConfig(storage_path=str(tmp_path)),
         scaling_config=ScalingConfig(num_workers=1),
     )
     result = trainer.fit()
@@ -352,7 +356,7 @@ def test_report_validation_fn_overrides_default_kwargs():
     }
 
 
-def test_report_validation_fn_error():
+def test_report_validation_fn_error(tmp_path):
     def validation_fn(checkpoint, rank=None, iteration=None):
         if rank == 0 and iteration == 0:
             raise ValueError("validation failed")
@@ -381,6 +385,7 @@ def test_report_validation_fn_error():
         train_fn,
         validation_config=ValidationConfig(fn=validation_fn),
         scaling_config=ScalingConfig(num_workers=2),
+        run_config=RunConfig(storage_path=str(tmp_path)),
     )
     result = trainer.fit()
     assert result.error is None
@@ -410,21 +415,108 @@ def test_report_validation_fn_success_after_retry():
             ray.train.report(
                 metrics={},
                 checkpoint=cp,
-                validation=ValidationTaskConfig(
-                    ray_remote_kwargs={
-                        "max_retries": 1,
-                        "retry_exceptions": [ValueError],
-                    },
-                ),
+                validation=True,
             )
 
     trainer = DataParallelTrainer(
         train_fn,
         scaling_config=ScalingConfig(num_workers=1),
-        validation_config=ValidationConfig(fn=validation_fn),
+        validation_config=ValidationConfig(
+            fn=validation_fn,
+            ray_remote_kwargs={"max_retries": 1, "retry_exceptions": [ValueError]},
+        ),
     )
     result = trainer.fit()
     assert result.best_checkpoints[0][1] == {"score": 100}
+
+
+def _run_first_trainer_for_resumption(storage_path, validation_task_config):
+    """Subprocess target: run a trainer with a stalling validation, then get SIGINT'd."""
+    # Lives outside the test because multiprocessing cannot pickle nested functions.
+    ray.init(address="auto")
+
+    def validation_fn_stall(checkpoint, score):
+        signal_actor = ray.get_actor(
+            "validation_resumption_signal", namespace="test_validation_resumption"
+        )
+        ray.get(signal_actor.send.remote())
+        while True:
+            time.sleep(1)
+
+    def train_fn():
+        with create_dict_checkpoint({}) as cp:
+            ray.train.report(
+                metrics={},
+                checkpoint=cp,
+                validation=validation_task_config,
+            )
+
+    trainer = DataParallelTrainer(
+        train_fn,
+        validation_config=ValidationConfig(
+            fn=validation_fn_stall,
+            task_config=ValidationTaskConfig(fn_kwargs={"score": 1}),
+        ),
+        scaling_config=ScalingConfig(num_workers=1),
+        run_config=RunConfig(
+            name="validation_fn_resumption", storage_path=storage_path
+        ),
+    )
+    trainer.fit()
+
+
+@pytest.mark.parametrize(
+    "validation_task_config, expected_score",
+    [
+        (True, 1),
+        (ValidationTaskConfig(fn_kwargs={"score": 2}), 2),
+    ],
+)
+def test_report_validation_fn_resumption(
+    tmp_path, validation_task_config, expected_score
+):
+    """Start train run with interrupted validations. Confirm second run finishes validations."""
+    signal_actor = (
+        create_remote_signal_actor(ray)
+        .options(
+            name="validation_resumption_signal",
+            namespace="test_validation_resumption",
+        )
+        .remote()
+    )
+
+    multiprocessing.set_start_method("spawn", force=True)
+    process = multiprocessing.Process(
+        target=_run_first_trainer_for_resumption,
+        args=(str(tmp_path), validation_task_config),
+    )
+    process.start()
+
+    # Wait for validation to start, then SIGINT the trainer process.
+    ray.get(signal_actor.wait.remote())
+    os.kill(process.pid, signal.SIGINT)
+    process.join()
+
+    def validation_fn_finish(checkpoint, score):
+        return {"score": score}
+
+    def train_fn_second():
+        pass
+
+    # Run second trainer that should finish interrupted validations.
+    trainer = DataParallelTrainer(
+        train_fn_second,
+        validation_config=ValidationConfig(
+            fn=validation_fn_finish,
+            task_config=ValidationTaskConfig(fn_kwargs={"score": 1}),
+        ),
+        scaling_config=ScalingConfig(num_workers=1),
+        run_config=RunConfig(
+            name="validation_fn_resumption", storage_path=str(tmp_path)
+        ),
+    )
+    result = trainer.fit()
+    assert result.metrics == {"score": expected_score}
 
 
 def test_report_checkpoint_upload_fn(tmp_path):
@@ -462,7 +554,7 @@ def test_report_checkpoint_upload_fn(tmp_path):
     }
 
 
-def test_checkpoint_upload_fn_returns_checkpoint():
+def test_checkpoint_upload_fn_returns_checkpoint(tmp_path):
     def train_fn():
         with create_dict_checkpoint({}) as checkpoint:
             ray.train.report(
@@ -474,6 +566,7 @@ def test_checkpoint_upload_fn_returns_checkpoint():
     trainer = DataParallelTrainer(
         train_fn,
         scaling_config=ScalingConfig(num_workers=1),
+        run_config=RunConfig(storage_path=str(tmp_path)),
     )
     with pytest.raises(
         WorkerGroupError,
@@ -482,7 +575,7 @@ def test_checkpoint_upload_fn_returns_checkpoint():
         trainer.fit()
 
 
-def test_report_get_all_reported_checkpoints():
+def test_report_get_all_reported_checkpoints(tmp_path):
     """Check that get_all_reported_checkpoints returns checkpoints depending on # report calls."""
 
     def train_fn():
@@ -502,11 +595,12 @@ def test_report_get_all_reported_checkpoints():
     trainer = DataParallelTrainer(
         train_fn,
         scaling_config=ScalingConfig(num_workers=2),
+        run_config=RunConfig(storage_path=str(tmp_path)),
     )
     trainer.fit()
 
 
-def test_get_all_reported_checkpoints_all_consistency_modes():
+def test_get_all_reported_checkpoints_all_consistency_modes(tmp_path):
     signal_actor = create_remote_signal_actor(ray).remote()
 
     def validation_fn(checkpoint, validation_score):
@@ -535,7 +629,7 @@ def test_get_all_reported_checkpoints_all_consistency_modes():
                 {"training_score": 1},
             ]
 
-            # Assert that we get validated checkpoints
+            # Assert that we get validated chceckpoints
             signal_actor.send.remote()
             assert [
                 reported_checkpoint.metrics
@@ -556,6 +650,7 @@ def test_get_all_reported_checkpoints_all_consistency_modes():
         ),
         scaling_config=ScalingConfig(num_workers=2),
         train_loop_config={"signal_actor": signal_actor},
+        run_config=RunConfig(storage_path=str(tmp_path)),
     )
     trainer.fit()
 
