@@ -56,7 +56,7 @@ class MBLTAcceleratorManager(AcceleratorManager):
                         break
                     count += 1
                 except Exception:
-                    beak
+                    break
             return count
         except Exception:
             return 0
