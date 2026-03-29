@@ -11,7 +11,9 @@ from ray._private.ray_constants import env_bool
 logger = logging.getLogger(__name__)
 
 MBLT_RT_VISIBLE_DEVICES_ENV_VAR = "MBLT_DEVICES"
-NOSET_MBLT_RT_VISIBLE_DEVICES_ENV_VAR = "RAY_EXPERIMENTAL_NOSET_MBLT_RT_VISIBLE_DEVICES"
+NOSET_MBLT_RT_VISIBLE_DEVICES_ENV_VAR = (
+    "RAY_EXPERIMENTAL_NOSET_MBLT_RT_VISIBLE_DEVICES"
+)
 
 _MBLT_DEV_PATTERNS = ["/dev/aries*", "/dev/regulus*"]
 _MBLT_PCI_FILTER = ["lspci", "-d", "209f:", "-nn"]
@@ -62,7 +64,7 @@ class MBLTAcceleratorManager(AcceleratorManager):
 
     @staticmethod
     def get_current_node_accelerator_type() -> Optional[str]:
-        """Gets the type of MBLT NPU on the current node."""
+        """Get the type of MBLT accelerator on the current node."""
         try:
             from qbruntime.accelerator import Accelerator
 
@@ -93,8 +95,8 @@ class MBLTAcceleratorManager(AcceleratorManager):
             if not out:
                 return None
             first_line = out.splitlines()[0]
-            m = re.search(r"]:\s*(.+?)\s*\[", first_line)
-            return (m.group(1).strip() if m else first_line.strip()) or None
+            match = re.search(r"]:\s*(.+?)\s*\[", first_line)
+            return (match.group(1).strip() if match else first_line.strip()) or None
         except Exception as e:
             logger.debug("Failed to detect MBLT type via lspci: %s", e)
             return None
@@ -114,7 +116,7 @@ class MBLTAcceleratorManager(AcceleratorManager):
                 " must be whole numbers. "
                 f"The specified quantity {quantity} is invalid.",
             )
-        return (True, None)
+        return True, None
 
     @staticmethod
     def set_current_process_visible_accelerator_ids(
@@ -129,7 +131,7 @@ class MBLTAcceleratorManager(AcceleratorManager):
 
 
 def _hint_num_from_os() -> Optional[int]:
-    """Best-effort hint for how many devices exist, used to bound probing."""
+    """Return a best-effort hint for the number of installed MBLT devices."""
     try:
         count = 0
         for pattern in _MBLT_DEV_PATTERNS:
