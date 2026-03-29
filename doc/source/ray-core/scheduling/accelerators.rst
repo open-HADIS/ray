@@ -146,7 +146,7 @@ If you need to, you can :ref:`override <specify-node-resources>` this.
             For example, ``CUDA_VISIBLE_DEVICES=1,3 ray start --head --num-gpus=2``
             lets Ray only see devices 1 and 3.
 
-   .. tab-item:: Mobilint MBLT
+    .. tab-item:: Mobilint MBLT
         :sync: Mobilint MBLT
 
         .. tip::
@@ -521,7 +521,7 @@ and assign accelerators to the task or actor by setting the corresponding enviro
             (gpu_task pid=51830) GPU IDs: [1]
             (gpu_task pid=51830) CUDA_VISIBLE_DEVICES: 1
 
-   .. tab-item:: Mobilint MBLT
+    .. tab-item:: Mobilint MBLT
         :sync: Mobilint MBLT
 
         .. testcode::
@@ -730,7 +730,7 @@ so multiple tasks and actors can share the same accelerator.
             # and share the same GPU.
             ray.get([f.remote() for _ in range(4)])
       
-      .. tab-item:: Mobilint MBLT
+    .. tab-item:: Mobilint MBLT
         :sync: Mobilint MBLT
 
         Mobilint MBLT doesn't support fractional resources.
