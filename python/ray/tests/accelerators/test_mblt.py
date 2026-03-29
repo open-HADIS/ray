@@ -63,12 +63,13 @@ class TestMBLTAcceleratorManager:
         ]
 
         os.environ[MBLT_RT_VISIBLE_DEVICES_ENV_VAR] = ""
-        assert MBLTAcceleratorManager.get_current_process_visible_accelerator_ids() == []
+        assert (
+            MBLTAcceleratorManager.get_current_process_visible_accelerator_ids() == []
+        )
 
         os.environ.pop(MBLT_RT_VISIBLE_DEVICES_ENV_VAR, None)
         assert (
-            MBLTAcceleratorManager.get_current_process_visible_accelerator_ids()
-            is None
+            MBLTAcceleratorManager.get_current_process_visible_accelerator_ids() is None
         )
 
     def test_get_current_node_num_accelerators(self):
