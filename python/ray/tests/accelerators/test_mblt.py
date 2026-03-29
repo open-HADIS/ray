@@ -31,9 +31,9 @@ def mock_qbruntime_module(monkeypatch):
     mock_qbruntime.accelerator = mock_qbruntime_accelerator
 
     monkeypatch.setitem(sys.modules, "qbruntime", mock_qbruntime)
-   monkeypatch.setitem(
-    sys.modules, "qbruntime.accelerator", mock_qbruntime_accelerator
-)
+    monkeypatch.setitem(
+        sys.modules, "qbruntime.accelerator", mock_qbruntime_accelerator
+    )
 
 
 @pytest.fixture
@@ -88,7 +88,9 @@ class TestMBLTAcceleratorManager:
         mock_qbruntime.accelerator = mock_qbruntime_accelerator
 
         monkeypatch.setitem(sys.modules, "qbruntime", mock_qbruntime)
-        monkeypatch.setitem(sys.modules, "qbruntime.accelerator", mock_qbruntime_accelerator)
+        monkeypatch.setitem(
+            sys.modules, "qbruntime.accelerator", mock_qbruntime_accelerator
+        )
 
         assert (
             MBLTAcceleratorManager.get_current_node_accelerator_type() == "ARIES-PROP"
