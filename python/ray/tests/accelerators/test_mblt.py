@@ -75,6 +75,23 @@ class TestMBLTAcceleratorManager:
     def test_get_current_node_accelerator_type(self):
         assert MBLTAcceleratorManager.get_current_node_accelerator_type() == "ARIES"
 
+    def test_get_current_node_accelerator_type_from_property(self, monkeypatch):
+        class MockAcceleratorWithProperty:
+            def __init__(self, dev_no):
+                self.device_name = "ARIES-PROP"
+
+        mock_qbruntime = types.ModuleType("qbruntime")
+        mock_qbruntime_accelerator = types.ModuleType("qbruntime.accelerator")
+        mock_qbruntime_accelerator.Accelerator = MockAcceleratorWithProperty
+        mock_qbruntime.accelerator = mock_qbruntime_accelerator
+
+        monkeypatch.setitem(sys.modules, "qbruntime", mock_qbruntime)
+        monkeypatch.setitem(sys.modules, "qbruntime.accelerator", mock_qbruntime_accelerator)
+
+        assert (
+            MBLTAcceleratorManager.get_current_node_accelerator_type() == "ARIES-PROP"
+        )
+
     def test_validate_resource_request_quantity(self):
         valid, error = MBLTAcceleratorManager.validate_resource_request_quantity(1)
         assert valid is True
