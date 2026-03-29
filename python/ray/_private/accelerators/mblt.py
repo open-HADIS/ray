@@ -43,10 +43,9 @@ class MBLTAcceleratorManager(AcceleratorManager):
     def get_current_node_num_accelerators() -> int:
         try:
             from qbruntime.accelerator import Accelerator
+
             max_probe = _hint_num_from_os() or 256
-            
             count = 0
-            dev_no = 0
             for dev_no in range(max_probe):
                 try:
                     acc = Accelerator(dev_no)
@@ -65,7 +64,7 @@ class MBLTAcceleratorManager(AcceleratorManager):
     def get_current_node_accelerator_type() -> Optional[str]:
         """Gets the type of MBLT NPU on the current node."""
         try:
-            from qbruntime.accelerator import Accelerator 
+            from qbruntime.accelerator import Accelerator
 
             acc = Accelerator(0)
             for attr in (
@@ -77,7 +76,9 @@ class MBLTAcceleratorManager(AcceleratorManager):
             ):
                 if hasattr(acc, attr):
                     try:
-                        val = getattr(acc, attr)()
+                        val = getattr(acc, attr)
+                        if callable(val):
+                            val = val()
                         if isinstance(val, str) and val.strip():
                             return val.strip()
                     except Exception:
