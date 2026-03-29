@@ -31,7 +31,9 @@ def mock_qbruntime_module(monkeypatch):
     mock_qbruntime.accelerator = mock_qbruntime_accelerator
 
     monkeypatch.setitem(sys.modules, "qbruntime", mock_qbruntime)
-    monkeypatch.setitem(sys.modules, "qbruntime.accelerator", mock_qbruntime_accelerator)
+   monkeypatch.setitem(
+    sys.modules, "qbruntime.accelerator", mock_qbruntime_accelerator
+)
 
 
 @pytest.fixture
